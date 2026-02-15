@@ -1,70 +1,137 @@
+from pathlib import Path
+import pandas as pd
+import numpy as np
+
+from config import MODEL_NAME, EMBEDDING_MODEL, TOP_K_NODES, MAX_HOPS
 from config.settings import Settings
 from services.llm_client import LLMClient
-from extraction.structured_extractor import StructuredExtractor
-from graph.typed_graph import TypedKnowledgeGraph
-from embedding.node_embedder import NodeEmbedder
+
+from preprocessing.master_processor import MasterPreprocessor
+from extraction.llm_extractor import LLMExtractor
+from embedding.embedder import Embedder
 from embedding.vector_index import FaissIndex
+from graph.typed_graph import TypedKnowledgeGraph
 from retrieval.graph_retriever import GraphRetriever
 from generation.graph_reasoner import GraphReasoner
-from models.graph_models import GraphNode, GraphRelation
 
 
-def main():
+def load_dataset(csv_path: str) -> pd.DataFrame:
+    path = Path(csv_path)
+
+    if not path.exists():
+        raise FileNotFoundError(f"Dataset not found: {csv_path}")
+
+    df = pd.read_csv(path)
+
+    required_columns = ["video_id", "transcript"]
+
+    for col in required_columns:
+        if col not in df.columns:
+            raise ValueError(f"Missing required column: {col}")
+
+    df = df.dropna(subset=["transcript"])
+    df = df[df["transcript"].str.strip().astype(bool)]
+    df = df.reset_index(drop=True)
+
+    return df
+
+
+class GraphBuilder:
+    def __init__(self, extractor: LLMExtractor, embedder: Embedder):
+        self.extractor = extractor
+        self.embedder = embedder
+        self.graph = TypedKnowledgeGraph()
+        self.embedding_dim = None
+        self.vector_index = None
+
+    def process_text(self, text: str):
+        structured = self.extractor.extract(text)
+
+        for category, values in structured.entities.dict().items():
+            for label in values:
+
+                embedding = self.embedder.embed(label)
+
+                if self.embedding_dim is None:
+                    self.embedding_dim = len(embedding)
+                    self.vector_index = FaissIndex(self.embedding_dim)
+
+                node_id = f"{label}_{category}"
+
+                self.graph.graph.add_node(
+                    node_id,
+                    label=label,
+                    type=category,
+                    embedding=embedding,
+                )
+
+                self.vector_index.add(node_id, np.array(embedding))
+
+        for rel in structured.relations:
+            self.graph.graph.add_edge(
+                rel.source,
+                rel.target,
+                relation=rel.relation,
+            )
+
+    def build_from_chunks(self, chunks):
+        for chunk in chunks:
+            self.process_text(chunk["text"])
+
+        return self.graph, self.vector_index
+
+
+def run_full_pipeline(csv_path: str, query: str):
+
     settings = Settings()
     settings.validate()
 
-    llm = LLMClient(settings.openrouter_api_key, settings.base_url)
-    extractor = StructuredExtractor(llm, settings.extraction_model)
+    llm_client = LLMClient(settings.openrouter_api_key)
 
-    graph = TypedKnowledgeGraph()
-    embedder = NodeEmbedder(settings.embedding_model_name)
+    df = load_dataset(csv_path)
 
-    sample_text = "Low self-esteem caused by family pressure and academic failure."
+    preprocessor = MasterPreprocessor(settings)
+    processed_df = preprocessor.process_batch(df)
 
-    structured = extractor.extract(sample_text)
+    chunks = []
+    for video in processed_df.to_dict(orient="records"):
+        for chunk in video["chunks"]:
+            chunks.append(chunk)
 
-    embedding_dim = None
+    extractor = LLMExtractor(MODEL_NAME)
+    embedder = Embedder(EMBEDDING_MODEL)
 
-    for entity in structured["entities"]:
-        embedding = embedder.embed(entity["label"])
-
-        if embedding_dim is None:
-            embedding_dim = len(embedding)
-            vector_index = FaissIndex(embedding_dim)
-
-        node = GraphNode(
-            node_id=entity["id"],
-            label=entity["label"],
-            node_type=entity["type"],
-            embedding=embedding,
-        )
-
-        graph.add_node(node)
-        vector_index.add(entity["id"], embedding)
-
-    for rel in structured["relations"]:
-        graph.add_relation(
-            GraphRelation(
-                source=rel["source"],
-                target=rel["target"],
-                relation_type=rel["type"],
-            )
-        )
+    builder = GraphBuilder(extractor, embedder)
+    graph, vector_index = builder.build_from_chunks(chunks)
 
     retriever = GraphRetriever(graph, vector_index)
-    reasoner = GraphReasoner(llm, settings.reasoning_model)
 
-    query = "How can I improve my self-esteem?"
     query_embedding = embedder.embed(query)
 
-    seed_nodes = retriever.retrieve_seed_nodes(query_embedding, top_k=3)
-    expanded_nodes = retriever.multi_hop_expand(seed_nodes, hops=2)
+    seed_nodes = retriever.retrieve_seed_nodes(
+        query_embedding,
+        TOP_K_NODES
+    )
+
+    expanded_nodes = retriever.multi_hop_expand(
+        seed_nodes,
+        MAX_HOPS
+    )
+
     subgraph_text = retriever.build_subgraph_text(expanded_nodes)
+
+    reasoner = GraphReasoner(llm_client, MODEL_NAME)
 
     answer = reasoner.generate_answer(query, subgraph_text)
 
-    print(answer)
+    return answer
 
 
 if __name__ == "__main__":
-    main()
+
+    result = run_full_pipeline(
+        csv_path="youtube_videos_export.csv",
+        query="How can I improve my self-esteem?"
+    )
+
+    print(result)
