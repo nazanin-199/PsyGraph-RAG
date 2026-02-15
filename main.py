@@ -1,66 +1,70 @@
-from config import *
-from extraction.llm_extractor import LLMExtractor
-from embedding.embedder import Embedder
-from graph.graph_store import GraphStore
-from graph.node import Node
-from graph.edge import Edge
-from retrieval.vector_index import VectorIndex
-from retrieval.subgraph_retriever import SubgraphRetriever
-from retrieval.reasoning import ReasoningEngine
-from generation.answer_generator import AnswerGenerator
-import uuid
+from config.settings import Settings
+from services.llm_client import LLMClient
+from extraction.structured_extractor import StructuredExtractor
+from graph.typed_graph import TypedKnowledgeGraph
+from embedding.node_embedder import NodeEmbedder
+from embedding.vector_index import FaissIndex
+from retrieval.graph_retriever import GraphRetriever
+from generation.graph_reasoner import GraphReasoner
+from models.graph_models import GraphNode, GraphRelation
 
 
-def build_graph_from_text(text, graph, extractor, embedder, vector_index):
-    result = extractor.extract(text)
+def main():
+    settings = Settings()
+    settings.validate()
 
-    for category, values in result.entities.dict().items():
-        for value in values:
-            node_id = str(uuid.uuid4())
-            embedding = embedder.embed(value)
+    llm = LLMClient(settings.openrouter_api_key, settings.base_url)
+    extractor = StructuredExtractor(llm, settings.extraction_model)
 
-            node = Node(
-                id=node_id,
-                label=value,
-                type=category,
-                embedding=embedding
-            )
+    graph = TypedKnowledgeGraph()
+    embedder = NodeEmbedder(settings.embedding_model_name)
 
-            graph.add_node(node)
-            vector_index.add(node_id, embedding)
+    sample_text = "Low self-esteem caused by family pressure and academic failure."
 
-    for rel in result.relations:
-        edge = Edge(
-            source=rel.source,
-            relation=rel.relation,
-            target=rel.target,
-            confidence=rel.confidence
+    structured = extractor.extract(sample_text)
+
+    embedding_dim = None
+
+    for entity in structured["entities"]:
+        embedding = embedder.embed(entity["label"])
+
+        if embedding_dim is None:
+            embedding_dim = len(embedding)
+            vector_index = FaissIndex(embedding_dim)
+
+        node = GraphNode(
+            node_id=entity["id"],
+            label=entity["label"],
+            node_type=entity["type"],
+            embedding=embedding,
         )
-        graph.add_edge(edge)
 
+        graph.add_node(node)
+        vector_index.add(entity["id"], embedding)
 
-def answer_question(question, graph, embedder, vector_index):
-    query_vector = embedder.embed(question)
-    seed_nodes = vector_index.search(query_vector, TOP_K_NODES)
+    for rel in structured["relations"]:
+        graph.add_relation(
+            GraphRelation(
+                source=rel["source"],
+                target=rel["target"],
+                relation_type=rel["type"],
+            )
+        )
 
-    subgraph = SubgraphRetriever(graph, MAX_HOPS).retrieve(seed_nodes)
-    reasoning_chains = ReasoningEngine(graph).build_reasoning_chain(subgraph)
+    retriever = GraphRetriever(graph, vector_index)
+    reasoner = GraphReasoner(llm, settings.reasoning_model)
 
-    generator = AnswerGenerator(MODEL_NAME)
-    return generator.generate(question, reasoning_chains)
+    query = "How can I improve my self-esteem?"
+    query_embedding = embedder.embed(query)
+
+    seed_nodes = retriever.retrieve_seed_nodes(query_embedding, top_k=3)
+    expanded_nodes = retriever.multi_hop_expand(seed_nodes, hops=2)
+    subgraph_text = retriever.build_subgraph_text(expanded_nodes)
+
+    answer = reasoner.generate_answer(query, subgraph_text)
+
+    print(answer)
 
 
 if __name__ == "__main__":
-    graph = GraphStore()
-    extractor = LLMExtractor(MODEL_NAME)
-    embedder = Embedder(EMBEDDING_MODEL)
-    vector_index = VectorIndex(dim=1536)
-
-    sample_text = "User transcript here"
-
-    build_graph_from_text(sample_text, graph, extractor, embedder, vector_index)
-
-    question = "Why do I feel low self esteem?"
-    answer = answer_question(question, graph, embedder, vector_index)
-
-    print(answer)
+    main()
