@@ -6,3 +6,4 @@ networkx>=3.0
 sentence-transformers>=2.2.0
 pydantic>=2.0.0
 python-dotenv>=1.0.0
+gdown>=4.7.0
