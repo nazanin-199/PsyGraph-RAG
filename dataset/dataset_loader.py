@@ -36,7 +36,8 @@ def load_dataset(csv_path: str) -> pd.DataFrame:
         df = pd.read_csv(path)
     except Exception as e:
         raise DataLoadError(f"Failed to read CSV: {e}") from e
-    
+        
+    df["transcript"] = df["transcript"].apply(clean_youtube_xml) 
     # Check required columns
     missing_columns = [col for col in REQUIRED_COLUMNS if col not in df.columns]
     if missing_columns:
@@ -47,6 +48,7 @@ def load_dataset(csv_path: str) -> pd.DataFrame:
     df = df.dropna(subset=["transcript"])
     df = df[df["transcript"].str.strip().astype(bool)]
     df = df.reset_index(drop=True)
+   
     
     removed = original_len - len(df)
     if removed > 0:
