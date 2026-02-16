@@ -45,7 +45,14 @@ class Embedder:
             max_retries: Number of retry attempts for failed requests
             timeout: Request timeout in seconds
         """
-        self.client = OpenAI(api_key=api_key, base_url="https://openrouter.ai/api/v1" )
+        self.client = OpenAI(
+            api_key=api_key,
+            base_url="https://openrouter.ai/api/v1",
+            default_headers={
+                "HTTP-Referer": "https://colab.research.google.com",
+                "X-Title": "PsyGraph-RAG"
+            }
+        )
         self.model_name = model_name
         self.max_retries = max_retries
         self.timeout = timeout
