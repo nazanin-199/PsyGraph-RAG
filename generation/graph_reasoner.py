@@ -34,7 +34,14 @@ class GraphReasoner:
             api_key: OpenAI API key
             timeout: Request timeout in seconds
         """
-        self.client = OpenAI(api_key=api_key, base_url="https://openrouter.ai/api/v1" )
+        self.client = OpenAI(
+            api_key=api_key,
+            base_url="https://openrouter.ai/api/v1",
+            default_headers={
+                "HTTP-Referer": "https://colab.research.google.com",
+                "X-Title": "PsyGraph-RAG"
+            }
+        )
         self.model = llm_model
         self.timeout = timeout
         self._generation_count = 0
