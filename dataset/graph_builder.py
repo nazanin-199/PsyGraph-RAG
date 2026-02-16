@@ -5,6 +5,8 @@ from typing import Optional, Set, Dict, Any, List
 from dataclasses import dataclass, field
 import numpy as np
 import logging
+import re
+import xml.etree.ElementTree as ET
 
 from graph.typed_graph import TypedKnowledgeGraph
 from embedding.vector_index import FaissIndex
@@ -216,7 +218,16 @@ class GraphBuilder:
             'failed_embeddings': self.state.failed_embeddings,
             'duplicates_skipped': self.state.duplicate_entities
         }
-    
+
+ 
+
+    def clean_youtube_xml(xml_text):
+        try:
+            root = ET.fromstring(xml_text)
+            texts = [elem.text for elem in root.findall(".//text") if elem.text]
+            return " ".join(texts)
+        except:
+            return re.sub(r"<[^>]+>", "", xml_text)
     def build_from_chunks(self, chunks: List[dict]) -> tuple:
         """
         Build graph from list of text chunks.
