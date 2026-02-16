@@ -1,29 +1,26 @@
-"""
-Centralized configuration with environment variable support.
-"""
-from pydantic import BaseModel, Field, SecretStr, validator
+from pydantic import Field, SecretStr, validator
 from pydantic_settings import BaseSettings
 from typing import Optional, Literal
 from pathlib import Path
 
 
-class Settings(BaseModel):
+class Settings(BaseSettings):
     """Application configuration with validation."""
     
-    # API Keys
+    # API Keys (OpenRouter)
     openai_api_key: SecretStr = Field(..., env="OPENAI_API_KEY")
     
-    # Model Configuration
-    llm_model: str = Field(default="gpt-4o-mini", env="LLM_MODEL")
-    embedding_model: str = Field(default="text-embedding-3-small", env="EMBEDDING_MODEL")
+    # OpenRouter Models
+    llm_model: str = Field(default="openai/gpt-4o-mini", env="LLM_MODEL")
+    embedding_model: str = Field(default="openai/text-embedding-3-small", env="EMBEDDING_MODEL")
     
     # Retrieval Parameters
     top_k_nodes: int = Field(default=5, ge=1, le=20, env="TOP_K_NODES")
     max_hops: int = Field(default=2, ge=1, le=5, env="MAX_HOPS")
     
     # Processing Configuration
-    batch_size: int = Field(default=100, ge=1, le=2048, env="BATCH_SIZE")
-    max_workers: int = Field(default=4, ge=1, le=16, env="MAX_WORKERS")
+    batch_size: int = Field(default=30, ge=1, le=2048, env="BATCH_SIZE")
+    max_workers: int = Field(default=1, ge=1, le=16, env="MAX_WORKERS")
     enable_parallel: bool = Field(default=False, env="ENABLE_PARALLEL")
     
     # Chunking Parameters
@@ -42,29 +39,27 @@ class Settings(BaseModel):
     
     # Retry Configuration
     max_retries: int = Field(default=3, ge=1, le=10)
-    timeout: int = Field(default=30, ge=5, le=120)
+    timeout: int = Field(default=60, ge=5, le=120)
     
     # Logging
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = Field(
-        default="INFO", 
+        default="INFO",
         env="LOG_LEVEL"
     )
     log_file: Optional[Path] = Field(default=Path("pipeline.log"), env="LOG_FILE")
     
     @validator("cache_dir", "data_dir", "output_dir")
     def create_directories(cls, v):
-        """Ensure directories exist."""
         if v and isinstance(v, Path):
             v.mkdir(parents=True, exist_ok=True)
         return v
     
     def validate(self) -> None:
-        """Perform additional validation."""
-        # Ensure API key is set
-        if not self.openai_api_key.get_secret_value():
-            raise ValueError("OPENAI_API_KEY must be set")
+        key = self.openai_api_key.get_secret_value()
         
-        # Create log directory
+        if not key.startswith("sk-or-"):
+            raise ValueError(" This configuration requires OpenRouter API key (sk-or-)")
+        
         if self.log_file:
             self.log_file.parent.mkdir(parents=True, exist_ok=True)
     
@@ -73,8 +68,8 @@ class Settings(BaseModel):
         env_file_encoding = "utf-8"
 
 
-# Default configuration constants (for backward compatibility)
-MODEL_NAME = "gpt-4o-mini"
-EMBEDDING_MODEL = "text-embedding-3-small"
+# Backward compatibility constants
+MODEL_NAME = "openai/gpt-4o-mini"
+EMBEDDING_MODEL = "openai/text-embedding-3-small"
 TOP_K_NODES = 5
 MAX_HOPS = 2
