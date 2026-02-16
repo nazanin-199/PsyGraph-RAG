@@ -149,7 +149,24 @@ class GraphBuilder:
             
             # Atomic commit: add all entities or roll back
             successful_entities = []
+            try:
+                extraction_result = self.extractor.extract(chunk_text)
             
+                if not extraction_result:
+                    return {
+                        "entities_added": 0,
+                        "relations_added": 0
+                    }
+            
+                successful_entities = extraction_result.get("entities", [])
+            
+            except Exception as e:
+                logger.error(f"Extraction failed: {e}")
+                return {
+                    "entities_added": 0,
+                    "relations_added": 0
+                }
+
             for entity_data, embedding in zip(entities_to_process, embeddings):
                 if embedding is None:
                     logger.warning(f"Failed to embed '{entity_data['label']}', skipping")
